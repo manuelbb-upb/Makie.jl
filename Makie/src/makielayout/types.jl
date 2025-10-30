@@ -586,9 +586,11 @@ Axis(fig_or_scene; palette = nothing, kwargs...)
         "Button that needs to be pressed to allow scroll zooming."
         zoombutton::IsPressedInputType = true
         "The position of the x axis (`:bottom` or `:top`)."
-        xaxisposition::Symbol = :bottom
+        xaxisposition::Union{Symbol, Float64} = :bottom
+        xaxisflip::Bool = true
         "The position of the y axis (`:left` or `:right`)."
-        yaxisposition::Symbol = :left
+        yaxisposition::Union{Symbol, Float64} = :left
+        yaxisflip::Bool = true
         """
         If `true`, limits the x axis spine's extent to the outermost major tick marks.
         Can also be set to a `Tuple{Bool,Bool}` to control each side separately.

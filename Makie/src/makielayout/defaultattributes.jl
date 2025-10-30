@@ -37,6 +37,7 @@ end
 function generic_plot_attributes(::Type{LineAxis})
     return Attributes(
         endpoints = (Point2f(0, 0), Point2f(100, 0)),
+        spineposition = 0.0f0,
         trimspine = false,
         limits = (0.0f0, 100.0f0),
         flipped = false,

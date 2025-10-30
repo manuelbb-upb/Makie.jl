@@ -9,19 +9,21 @@ function LineAxis(parent::Scene; @nospecialize(kwargs...))
 end
 
 function calculate_horizontal_extends(endpoints)::Tuple{Float32, NTuple{2, Float32}, Bool}
-    if endpoints[1][2] == endpoints[2][2]
+    data = if endpoints[1][2] == endpoints[2][2]
         horizontal = true
         extents = (endpoints[1][1], endpoints[2][1])
         position = endpoints[1][2]
-        return (position, extents, horizontal)
+        (position, extents, horizontal)
     elseif endpoints[1][1] == endpoints[2][1]
         horizontal = false
         extents = (endpoints[1][2], endpoints[2][2])
         position = endpoints[1][1]
-        return (position, extents, horizontal)
+        (position, extents, horizontal)
     else
         error("OldAxis endpoints $(endpoints[1]) and $(endpoints[2]) are neither on a horizontal nor vertical line")
     end
+    @debug "$(data[3] ? :x : :y) pos = $(data[1]), ep = $(data[2])"
+    return data
 end
 
 
@@ -197,17 +199,17 @@ end
 # we only check approximately because we want to keep ticks on the frame
 is_within_limits(tv, limits) = (limits[1] - 100eps(limits[1]) < tv) && (tv < limits[2] + 100eps(limits[2]))
 
-function update_tickpos_string(closure_args, tickvalues_labels_unfiltered, reversed::Bool, scale)
+function update_tickpos_string(closure_args, pos_extents_horizontal, tickvalues_labels_unfiltered, reversed::Bool, scale)
 
-    tickstrings, tickpositions, tickvalues, pos_extents_horizontal, limits_obs = closure_args
+    tickstrings, tickpositions, tickvalues, limits_obs = closure_args
     limits = limits_obs[]::NTuple{2, Float64}
 
     tickvalues_unfiltered, tickstrings_unfiltered = tickvalues_labels_unfiltered
 
-    position::Float32, extents_uncorrected::NTuple{2, Float32}, horizontal::Bool = pos_extents_horizontal[]
-
+    position::Float32, extents_uncorrected::NTuple{2, Float32}, horizontal::Bool = pos_extents_horizontal
     extents = reversed ? reverse(extents_uncorrected) : extents_uncorrected
 
+    @debug "$(horizontal ? :x : :y) update_tickpos_string $(position), $(extents)"
     px_o = extents[1]
     px_width = extents[2] - extents[1]
 
@@ -454,7 +456,8 @@ function LineAxis(parent::Scene, attrs::Attributes)
 
     onany(
         update_tickpos_string, parent,
-        Observable((tickstrings, tickpositions, tickvalues, pos_extents_horizontal, limits)),
+        Observable((tickstrings, tickpositions, tickvalues, limits)),
+        pos_extents_horizontal,
         tickvalues_labels_unfiltered, reversed, attrs.scale
     )
 

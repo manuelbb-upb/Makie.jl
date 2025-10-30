@@ -597,6 +597,8 @@ convert_for_attribute(t::Any, x) = x
 convert_for_attribute(t::Type{Float64}, x) = convert(Float64, x)
 convert_for_attribute(t::Type{RGBAf}, x) = to_color(x)::RGBAf
 convert_for_attribute(t::Type{Makie.FreeTypeAbstraction.FTFont}, x) = to_font(x)
+convert_for_attribute(t::Type{Union{Symbol, <:Number}}, x::Symbol) = x
+convert_for_attribute(t::Type{Union{Symbol, F}}, x::Number) where F<:Number = convert(F, x)
 
 Base.@kwdef struct Example
     backend::Symbol = :CairoMakie # the backend that is used for rendering
