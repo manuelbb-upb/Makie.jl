@@ -287,6 +287,8 @@ Axis(fig_or_scene; palette = nothing, kwargs...)
     xaxis::LineAxis
     yaxis::LineAxis
     elements::Dict{Symbol, Any}
+    xaxis_is_spine::Observable{Symbol}
+    yaxis_is_spine::Observable{Symbol}
     @attributes begin
         """
         Global state for the x dimension conversion.
@@ -372,6 +374,10 @@ Axis(fig_or_scene; palette = nothing, kwargs...)
         xlabelrotation = Makie.automatic
         "The ylabel rotation in radians."
         ylabelrotation = Makie.automatic
+        "Relative horizontal position of the xlabel with respect to the xaxis length."
+        xlabelposition::Float64 = 0.5f0
+        "Relative vertical position of the ylabel with respect to the yaxis length."
+        ylabelposition::Float64 = 0.5f0
         "The font family of the xticklabels."
         xticklabelfont = :regular
         "The font family of the yticklabels."
@@ -474,22 +480,37 @@ Axis(fig_or_scene; palette = nothing, kwargs...)
         xminorgridstyle = nothing
         "The linestyle of the y minor grid lines."
         yminorgridstyle = nothing
-        "Controls if the bottom axis spine is visible."
-        bottomspinevisible::Bool = true
-        "Controls if the left axis spine is visible."
+        "Controls if the xaxis spine is visible."
+        xaxisvisible::Bool = true
+        "Controls if the yaxis spine is visible."
+        yxaxisvisible::Bool = true
+        "If the left spine is not the yaxis, controls if left spine is visible."
         leftspinevisible::Bool = true
-        "Controls if the top axis spine is visible."
-        topspinevisible::Bool = true
-        "Controls if the right axis spine is visible."
+        "If the right spine is not the yaxis, controls if right spine is visible."
         rightspinevisible::Bool = true
-        "The color of the bottom axis spine."
-        bottomspinecolor::RGBAf = :black
-        "The color of the left axis spine."
-        leftspinecolor::RGBAf = :black
-        "The color of the top axis spine."
-        topspinecolor::RGBAf = :black
-        "The color of the right axis spine."
-        rightspinecolor::RGBAf = :black
+        "If the bottom spine is not the xaxis, controls if bottom spine is visible."
+        bottomspinevisible::Bool = true
+        "If the top spine is not the xaxis, controls if top spine is visible."
+        topspinevisible::Bool = true
+        spinecolor::RGBAf = :black
+        "The color of the xaxis spine. If `nothing`, use `spinecolor`."
+        xaxiscolor::Optional{RGBAf} = nothing
+        "The color of the left spine. If `nothing`, use `spinecolor`."
+        yaxiscolor::Optional{RGBAf} = nothing
+        "The color of the left spine. If `nothing`, use `yaxiscolor`."
+        leftspinecolor::Optional{RGBAf} = nothing
+        "The color of the right spine. If `nothing`, use `yaxiscolor`."
+        rightspinecolor::Optional{RGBAf} = nothing
+        "The color of the bottom spine. If `nothing`, use `xaxiscolor`."
+        bottomspinecolor::Optional{RGBAf} = nothing
+        "The color of the top spine. If `nothing`, use `xaxiscolor`."
+        topspinecolor::Optional{RGBAf} = nothing
+       
+        xaxistail = nothing
+        xaxistip = nothing
+        yaxistail = nothing
+        yaxistip = nothing
+
         """
         Controls the forced aspect ratio of the axis.
 
@@ -585,12 +606,14 @@ Axis(fig_or_scene; palette = nothing, kwargs...)
         yzoomkey::IsPressedInputType = Makie.Keyboard.y
         "Button that needs to be pressed to allow scroll zooming."
         zoombutton::IsPressedInputType = true
-        "The position of the x axis (`:bottom` or `:top`)."
+        "The position of the x axis (`:bottom` or `:top` or a Number within the x-limits)."
         xaxisposition::Union{Symbol, Float64} = :bottom
-        xaxisflip::Bool = true
-        "The position of the y axis (`:left` or `:right`)."
+        "Flip decorations to the right of xaxis spine."
+        xaxisflip::Optional{Bool} = nothing
+        "The position of the y axis (`:left` or `:right` or a Number within the y-limits)."
         yaxisposition::Union{Symbol, Float64} = :left
-        yaxisflip::Bool = true
+        "Flip decorations to the top of yaxis spine."
+        yaxisflip::Optional{Bool} = nothing
         """
         If `true`, limits the x axis spine's extent to the outermost major tick marks.
         Can also be set to a `Tuple{Bool,Bool}` to control each side separately.

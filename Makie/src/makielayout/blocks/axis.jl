@@ -122,13 +122,12 @@ end
 
 function compute_protrusions(
         title, titlesize, titlegap, titlevisible, spinewidth,
-        topspinevisible, bottomspinevisible, leftspinevisible, rightspinevisible,
-        xaxisprotrusion, yaxisprotrusion, xaxisposition_abs, xaxis_flipped, 
-        yaxisposition_abs, yaxis_flipped,
+        xaxisprotrusion, xaxisposition_abs, xaxis_flipped, 
+        yaxisprotrusion, yaxisposition_abs, yaxis_flipped,
         subtitle, subtitlevisible, subtitlesize, subtitlegap, titlelineheight, subtitlelineheight,
         subtitlet, titlet, area
     )
-    @info "compute protrusions"
+    @debug "`compute_protrusions`"
     local _left::Float32, _right::Float32, _bottom::Float32, _top::Float32 = 0.0f0, 0.0f0, 0.0f0, 0.0f0
 
     if !xaxis_flipped
@@ -188,7 +187,7 @@ function initialize_block!(ax::Axis; palette = nothing)
 
     scene = Scene(blockscene, viewport = scenearea, visible = false)
     on(blockscene, scene.viewport) do _
-        @info "scene.viewport $(scene.viewport)"
+        @debug "scene.viewport $(scene.viewport)"
     end
     # Hide to block updates, will be unhidden! in constructor who calls this!
     @assert !scene.visible[]
@@ -273,11 +272,11 @@ function initialize_block!(ax::Axis; palette = nothing)
         blockscene, scene.transformation.transform_func, finallimits,
         ax.xreversed, ax.yreversed; priority = -2
     ) do args...
-        @info "update_axis_camera $(finallimits)"
+        @debug "update_axis_camera $(finallimits)"
         update_axis_camera(scene, args...)
     end
 
-    xlims = lift(ls -> (@info "xlimits"; @show(xlimits(ls))), blockscene, finallimits; ignore_equal_values = true)
+    xlims = lift(xlimits, blockscene, finallimits; ignore_equal_values = true)
     ylims = lift(ylimits, blockscene, finallimits; ignore_equal_values = true)
 
     xaxisposition_obs = needs_tick_update_observable(ax.dim1_conversion)
@@ -299,7 +298,7 @@ function initialize_block!(ax::Axis; palette = nothing)
             lb = other_scale(lb); ub = other_scale(ub); v = other_scale(v)
             pos = Float32( (v - lb) / (ub - lb) )
         end
-        @info "$(side)axisposition_rel $(pos)"
+        @debug "$(side)axisposition_rel $(pos)"
         return pos
     end
  
@@ -317,6 +316,23 @@ function initialize_block!(ax::Axis; palette = nothing)
         return _axisposition_rel(axispos, other_lims, other_dim_convert, other_scale, :y)
     end
 
+    xaxis_is_spine = lift(
+        blockscene, xaxisposition_rel; ignore_equal_values=true
+    ) do pos_rel
+        pos_rel == 0f0 && return :bottom    # TODO tolerances?
+        pos_rel == 1f0 && return :top
+        return :none
+    end
+    yaxis_is_spine = lift(
+        blockscene, yaxisposition_rel; ignore_equal_values=true
+    ) do pos_rel
+        pos_rel == 0f0 && return :left
+        pos_rel == 1f0 && return :right
+        return :none
+    end
+    setfield!(ax, :xaxis_is_spine, xaxis_is_spine)
+    setfield!(ax, :yaxis_is_spine, yaxis_is_spine)
+
     xaxis_extends = lift(blockscene, scene.viewport; ignore_equal_values=true) do area
         (left(area), right(area))
     end
@@ -324,7 +340,6 @@ function initialize_block!(ax::Axis; palette = nothing)
     yaxis_extends = lift(blockscene, scene.viewport; ignore_equal_values=true) do area
         (bottom(area), top(area))
     end
-
     xaxisposition_abs = lift(
         blockscene, xaxisposition_rel, yaxis_extends, ax.yreversed;
         ignore_equal_values=true
@@ -341,13 +356,13 @@ function initialize_block!(ax::Axis; palette = nothing)
         w = u - l
         l + pos_rel * w        
     end
-
+    
     xaxis_endpoints = lift(
         blockscene, xaxis_extends, xaxisposition_abs;
         ignore_equal_values=true
     ) do (x1, x2), y
         ep = ([x1; y], [x2; y])
-        @info "xaxis_endpoints $(ep)"
+        @debug "xaxis_endpoints $(ep)"
         return ep
     end
     yaxis_endpoints = lift(
@@ -355,75 +370,32 @@ function initialize_block!(ax::Axis; palette = nothing)
         ignore_equal_values=true
     ) do (y1, y2), x
         ep = ([x; y1], [x; y2])
-        @info "yaxis_endpoints $(ep)"
+        @debug "yaxis_endpoints $(ep)"
         return ep
     end
    
     xaxis_flipped = lift(
-        blockscene, ax.xaxisflip, xaxisposition_rel; ignore_equal_values = true
-    ) do axisflip, axisposition_rel
-        return xor(axisflip, axisposition_rel <= 0.5)
+        blockscene, ax.xaxisflip, xaxisposition_rel;
+        ignore_equal_values = true 
+    ) do axisflip, pos_rel
+        !isnothing(axisflip) && return axisflip
+        return pos_rel > .75    # just a heuristic
     end
     yaxis_flipped = lift(
-        blockscene, ax.yaxisflip, yaxisposition_rel; ignore_equal_values = true
-    ) do axisflip, axisposition_rel
-        return xor(axisflip, axisposition_rel <= 0.5)
+        blockscene, ax.yaxisflip, yaxisposition_rel;
+        ignore_equal_values = true 
+    ) do axisflip, pos_rel
+        !isnothing(axisflip) && return axisflip
+        return pos_rel > .75
     end
 
-    xspinevisible = lift(
-        blockscene, xaxis_flipped, ax.bottomspinevisible, ax.topspinevisible;
-        ignore_equal_values = true
-    ) do xflip, bv, tv
-        xflip ? tv : bv
-    end
-    xoppositespinevisible = lift(
-        blockscene, xaxis_flipped, ax.bottomspinevisible, ax.topspinevisible;
-        ignore_equal_values = true
-    ) do xflip, bv, tv
-        xflip ? bv : tv
-    end
-    yspinevisible = lift(
-        blockscene, yaxis_flipped, ax.leftspinevisible, ax.rightspinevisible;
-        ignore_equal_values = true
-    ) do yflip, lv, rv
-        yflip ? rv : lv
-    end
-    yoppositespinevisible = lift(
-        blockscene, yaxis_flipped, ax.leftspinevisible, ax.rightspinevisible;
-        ignore_equal_values = true
-    ) do yflip, lv, rv
-        yflip ? lv : rv
-    end
-    xspinecolor = lift(
-        blockscene, xaxis_flipped, ax.bottomspinecolor, ax.topspinecolor;
-        ignore_equal_values = true
-    ) do xflip, bc, tc
-        xflip ? tc : bc
-    end
-    xoppositespinecolor = lift(
-        blockscene, xaxis_flipped, ax.bottomspinecolor, ax.topspinecolor;
-        ignore_equal_values = true
-    ) do xflip, bc, tc
-        xflip ? bc : tc
-    end
-    yspinecolor = lift(
-        blockscene, yaxis_flipped, ax.leftspinecolor, ax.rightspinecolor;
-        ignore_equal_values = true
-    ) do yflip, lc, rc
-        yflip ? rc : lc
-    end
-    yoppositespinecolor = lift(
-        blockscene, yaxis_flipped, ax.leftspinecolor, ax.rightspinecolor;
-        ignore_equal_values = true
-    ) do yflip, lc, rc
-        yflip ? lc : rc
-    end
-
-    @info "XAXIS"
+    _axiscolor(spinecolor, axiscolor) = isnothing(axiscolor) ? spinecolor : axiscolor
+    xspinevisible = ax.xaxisvisible
+    xspinecolor = lift(_axiscolor, blockscene, ax.spinecolor, ax.xaxiscolor; ignore_equal_values=true)
     xaxis = LineAxis(
         blockscene, endpoints = xaxis_endpoints, spineposition = xaxisposition_abs, limits = xlims,
         flipped = xaxis_flipped, ticklabelrotation = ax.xticklabelrotation,
-        ticklabelalign = ax.xticklabelalign, labelsize = ax.xlabelsize,
+        ticklabelalign = ax.xticklabelalign, labelsize = ax.xlabelsize, labelposition = ax.xlabelposition,
         labelpadding = ax.xlabelpadding, ticklabelpad = ax.xticklabelpad, labelvisible = ax.xlabelvisible,
         label = ax.xlabel, labelfont = ax.xlabelfont, labelrotation = ax.xlabelrotation, ticklabelfont = ax.xticklabelfont, ticklabelcolor = ax.xticklabelcolor, labelcolor = ax.xlabelcolor, tickalign = ax.xtickalign,
         ticklabelspace = ax.xticklabelspace, dim_convert = ax.dim1_conversion, ticks = ax.xticks, tickformat = ax.xtickformat, ticklabelsvisible = ax.xticklabelsvisible,
@@ -432,15 +404,18 @@ function initialize_block!(ax::Axis; palette = nothing)
         reversed = ax.xreversed, tickwidth = ax.xtickwidth, tickcolor = ax.xtickcolor,
         minorticksvisible = ax.xminorticksvisible, minortickalign = ax.xminortickalign, minorticksize = ax.xminorticksize, minortickwidth = ax.xminortickwidth, minortickcolor = ax.xminortickcolor, minorticks = ax.xminorticks, scale = ax.xscale,
         minorticksused = ax.xminorgridvisible,
+        tail = ax.xaxistail, tip = ax.xaxistip,
     )
 
     ax.xaxis = xaxis
     
-    @info "YAXIS"
+    yspinevisible = ax.yxaxisvisible
+    yspinecolor = lift(_axiscolor, blockscene, ax.spinecolor, ax.yaxiscolor; ignore_equal_values=true)
+
     yaxis = LineAxis(
         blockscene, endpoints = yaxis_endpoints, spinepoisition = yaxisposition_abs, limits = ylims,
         flipped = yaxis_flipped, ticklabelrotation = ax.yticklabelrotation,
-        ticklabelalign = ax.yticklabelalign, labelsize = ax.ylabelsize,
+        ticklabelalign = ax.yticklabelalign, labelsize = ax.ylabelsize, labelposition = ax.ylabelposition,
         labelpadding = ax.ylabelpadding, ticklabelpad = ax.yticklabelpad, labelvisible = ax.ylabelvisible,
         label = ax.ylabel, labelfont = ax.ylabelfont, labelrotation = ax.ylabelrotation, ticklabelfont = ax.yticklabelfont, ticklabelcolor = ax.yticklabelcolor, labelcolor = ax.ylabelcolor, tickalign = ax.ytickalign,
         ticklabelspace = ax.yticklabelspace, dim_convert = ax.dim2_conversion, ticks = ax.yticks, tickformat = ax.ytickformat, ticklabelsvisible = ax.yticklabelsvisible,
@@ -449,96 +424,115 @@ function initialize_block!(ax::Axis; palette = nothing)
         tickcolor = ax.ytickcolor,
         minorticksvisible = ax.yminorticksvisible, minortickalign = ax.yminortickalign, minorticksize = ax.yminorticksize, minortickwidth = ax.yminortickwidth, minortickcolor = ax.yminortickcolor, minorticks = ax.yminorticks, scale = ax.yscale,
         minorticksused = ax.yminorgridvisible,
+        tail = ax.yaxistail, tip = ax.yaxistip,
     )
 
     ax.yaxis = yaxis
+    
+    ## make mirrored ticks
+    function _spineticksvisible(ticksmirrored, ticksvisible, axis_is_spine, target)
+        axis_is_spine === :target && return false
+        return ticksmirrored && ticksvisible
+    end
+    vtickargs = (yaxis.tickpositions, yaxis_is_spine, ax.yticksize, ax.ytickalign, ax.yticksmirrored, ax.yticksvisible, ax.ytickcolor, ax.ytickwidth)
+    htickargs = (xaxis.tickpositions, xaxis_is_spine, ax.xticksize, ax.xtickalign, ax.xticksmirrored, ax.xticksvisible, ax.xtickcolor, ax.xtickwidth)
+    for (target, tickargs) in (
+        (:top, htickargs), (:bottom, htickargs), (:left, vtickargs), (:right, vtickargs)
+    )
+        tickpositions, axis_is_spine, ticksize, tickalign, ticksmirrored, ticksvisible, color, linewidth = tickargs
+        mirrored = lift(
+            mirror_ticks, blockscene, tickpositions, ticksize, tickalign, scene.viewport, ax.spinewidth, target)
+    
+        visible = lift(
+            _spineticksvisible, blockscene, ticksmirrored, ticksvisible, axis_is_spine, target; 
+            ignore_equal_values=true)
+   
+        tick_lines = linesegments!(blockscene, mirrored; visible, linewidth, color)
+        translate!(tick_lines, 0, 0, 10)
+    end
+    
+    ### minor mirrored ticks
+    vmtickargs = (yaxis.minortickpositions, yaxis_is_spine, ax.yminorticksize, ax.ytickalign, ax.yticksmirrored, ax.yminorticksvisible, ax.yminortickcolor, ax.yminortickwidth)
+    hmtickargs = (xaxis.minortickpositions, xaxis_is_spine, ax.xminorticksize, ax.xtickalign, ax.xticksmirrored, ax.xminorticksvisible, ax.xminortickcolor, ax.xminortickwidth)
+    for (target, tickargs) in (
+        (:top, hmtickargs), (:bottom, hmtickargs), (:left, vmtickargs), (:right, vmtickargs)
+    )
+        tickpositions, axis_is_spine, ticksize, tickalign, ticksmirrored, ticksvisible, color, linewidth = tickargs
+        mirrored = lift(
+            mirror_ticks, blockscene, tickpositions, ticksize, tickalign, scene.viewport, ax.spinewidth, target)
+    
+        visible = lift(
+            _spineticksvisible, blockscene, ticksmirrored, ticksvisible, axis_is_spine, target; 
+            ignore_equal_values=true)
+   
+        tick_lines = linesegments!(blockscene, mirrored; visible, linewidth, color)
+        translate!(tick_lines, 0, 0, 10)
+    end
 
-    xoppositelinepoints = lift(
-        blockscene, scene.viewport, ax.spinewidth, xaxis_flipped;
-        ignore_equal_values = true
-    ) do r, sw, axflipped
-        if axflipped
-            y = bottom(r)
-            p1 = Point2f(left(r) - 0.5sw, y)
-            p2 = Point2f(right(r) + 0.5sw, y)
+    ## make spine lines
+    function _spinevisible(spinevisible, axis_is_spine, target)
+        axis_is_spine === :target && return false
+        return spinevisible
+    end
+    leftspinevisible = lift(_spinevisible, blockscene, ax.leftspinevisible, yaxis_is_spine, :left; ignore_equal_values=true)
+    rightspinevisible = lift(_spinevisible, blockscene, ax.rightspinevisible, yaxis_is_spine, :right; ignore_equal_values=true)
+    bottomspinevisible = lift(_spinevisible, blockscene, ax.bottomspinevisible, xaxis_is_spine, :bottom; ignore_equal_values=true)
+    topspinevisible = lift(_spinevisible, blockscene, ax.bottomspinevisible, xaxis_is_spine, :top; ignore_equal_values=true)
+
+    _spinecolor(axiscolor, spinecolor) = isnothing(spinecolor) ? axiscolor : spinecolor
+    leftspinecolor = lift(_spinecolor, blockscene, yspinecolor, ax.leftspinecolor)
+    rightspinecolor = lift(_spinecolor, blockscene, yspinecolor, ax.rightspinecolor)
+    bottomspinecolor = lift(_spinecolor, blockscene, xspinecolor, ax.bottomspinecolor)
+    topspinecolor = lift(_spinecolor, blockscene, xspinecolor, ax.topspinecolor)
+
+    function _verticallinepoints(area, sw, position)
+        b = bottom(area); t = top(area);
+        if position === :left
+            x = left(area)
+            p1 = Point2f(x, b - 0.5sw)
+            p2 = Point2f(x, t + 0.5sw)
             return [p1, p2]
         else
-            y = top(r)
-            p1 = Point2f(left(r) - 0.5sw, y)
-            p2 = Point2f(right(r) + 0.5sw, y)
+            x = right(area)
+            p1 = Point2f(x, b - 0.5sw)
+            p2 = Point2f(x, t + 0.5sw)
             return [p1, p2]
         end
     end
 
-    yoppositelinepoints = lift(
-        blockscene, scene.viewport, ax.spinewidth, yaxis_flipped;
-        ignore_equal_values = true
-    ) do r, sw, axflipped
-        if axflipped
-            x = left(r)
-            p1 = Point2f(x, bottom(r) - 0.5sw)
-            p2 = Point2f(x, top(r) + 0.5sw)
+    function _horizontallinepoints(area, sw, position)
+        l = left(area); r = right(area);
+        if position === :bottom
+            y = bottom(area)
+            p1 = Point2f(l - 0.5sw, y)
+            p2 = Point2f(r + 0.5sw, y)
             return [p1, p2]
         else
-            x = right(r)
-            p1 = Point2f(x, bottom(r) - 0.5sw)
-            p2 = Point2f(x, top(r) + 0.5sw)
+            y = top(area)
+            p1 = Point2f(l - 0.5sw, y)
+            p2 = Point2f(r + 0.5sw, y)
             return [p1, p2]
         end
     end
 
-    xticksmirrored = lift(
-        mirror_ticks, blockscene, xaxis.tickpositions, ax.xticksize, ax.xtickalign,
-        scene.viewport, :x, xaxis_flipped, ax.spinewidth
-    )
-    xticksmirrored_lines = linesegments!(
-        blockscene, xticksmirrored, visible = @lift($(ax.xticksmirrored) && $(ax.xticksvisible)),
-        linewidth = ax.xtickwidth, color = ax.xtickcolor
-    )
-    translate!(xticksmirrored_lines, 0, 0, 10)
-    yticksmirrored = lift(
-        mirror_ticks, blockscene, yaxis.tickpositions, ax.yticksize, ax.ytickalign,
-        scene.viewport, :y, yaxis_flipped, ax.spinewidth
-    )
-    yticksmirrored_lines = linesegments!(
-        blockscene, yticksmirrored, visible = @lift($(ax.yticksmirrored) && $(ax.yticksvisible)),
-        linewidth = ax.ytickwidth, color = ax.ytickcolor
-    )
-    translate!(yticksmirrored_lines, 0, 0, 10)
-    xminorticksmirrored = lift(
-        mirror_ticks, blockscene, xaxis.minortickpositions, ax.xminorticksize,
-        ax.xminortickalign, scene.viewport, :x, xaxis_flipped, ax.spinewidth
-    )
-    xminorticksmirrored_lines = linesegments!(
-        blockscene, xminorticksmirrored, visible = @lift($(ax.xticksmirrored) && $(ax.xminorticksvisible)),
-        linewidth = ax.xminortickwidth, color = ax.xminortickcolor
-    )
-    translate!(xminorticksmirrored_lines, 0, 0, 10)
-    yminorticksmirrored = lift(
-        mirror_ticks, blockscene, yaxis.minortickpositions, ax.yminorticksize,
-        ax.yminortickalign, scene.viewport, :y, yaxis_flipped, ax.spinewidth
-    )
-    yminorticksmirrored_lines = linesegments!(
-        blockscene, yminorticksmirrored, visible = @lift($(ax.yticksmirrored) && $(ax.yminorticksvisible)),
-        linewidth = ax.yminortickwidth, color = ax.yminortickcolor
-    )
-    translate!(yminorticksmirrored_lines, 0, 0, 10)
+    leftlinepoints = lift(_verticallinepoints, scene.viewport, ax.spinewidth, :left; ignore_equal_values=true)
+    rightlinepoints = lift(_verticallinepoints, scene.viewport, ax.spinewidth, :right; ignore_equal_values=true)
+    bottomlinepoints = lift(_horizontallinepoints, scene.viewport, ax.spinewidth, :bottom; ignore_equal_values=true)
+    toplinepoints = lift(_horizontallinepoints, scene.viewport, ax.spinewidth, :top; ignore_equal_values=true)
 
-    xoppositeline = linesegments!(
-        blockscene, xoppositelinepoints, linewidth = ax.spinewidth,
-        visible = xoppositespinevisible, color = xoppositespinecolor, inspectable = false,
-        linestyle = nothing
+    for (elem_name, linepoints, visible, color) in (
+        (:leftspineline, leftlinepoints, leftspinevisible, leftspinecolor),
+        (:rightspineline, rightlinepoints, rightspinevisible, rightspinecolor),
+        (:bottomspineline, bottomlinepoints, bottomspinevisible, bottomspinecolor),
+        (:topspineline, toplinepoints, topspinevisible, topspinecolor),
     )
-    elements[:xoppositeline] = xoppositeline
-    translate!(xoppositeline, 0, 0, 20)
-
-    yoppositeline = linesegments!(
-        blockscene, yoppositelinepoints, linewidth = ax.spinewidth,
-        visible = yoppositespinevisible, color = yoppositespinecolor, inspectable = false,
-        linestyle = nothing
-    )
-    elements[:yoppositeline] = yoppositeline
-    translate!(yoppositeline, 0, 0, 20)
+        line = linesegments!(
+            blockscene, linepoints; linewidth = ax.spinewidth,
+            visible, color, inspectable = false, linestyle = nothing
+        )
+        elements[elem_name] = line
+        translate!(line, 0, 0, 20)
+    end
 
     onany(
         blockscene, xaxis.tickpositions, scene.viewport, xaxisposition_abs
@@ -546,7 +540,6 @@ function initialize_block!(ax::Axis; palette = nothing)
         local pxheight::Float32 = height(area)
         local offset_start::Float32 = - max(0f0, axisposition_abs - bottom(area))
         local offset_end::Float32 = pxheight + offset_start
-        @show pxheight, axisposition_abs, offset_start, offset_end
         update_gridlines!(xgridnode, Point2f(0, offset_start), Point2f(0, offset_end), tickpos)
     end
 
@@ -556,7 +549,6 @@ function initialize_block!(ax::Axis; palette = nothing)
         local pxwidth::Float32 = width(area)
         local offset_start::Float32 = - max(0f0, axisposition_abs - left(area))
         local offset_end::Float32 = pxwidth + offset_start
-        @show pxwidth, axisposition_abs, offset_start, offset_end
         update_gridlines!(ygridnode, Point2f(offset_start, 0), Point2f(offset_end, 0), tickpos)
     end
 
@@ -634,27 +626,14 @@ function initialize_block!(ax::Axis; palette = nothing)
     )
     elements[:title] = titlet
 
-    #=map!(
+    map!(
         compute_protrusions, blockscene, ax.layoutobservables.protrusions, ax.title, ax.titlesize,
         ax.titlegap, ax.titlevisible, ax.spinewidth,
-        ax.topspinevisible, ax.bottomspinevisible, ax.leftspinevisible, ax.rightspinevisible,
-        xaxis.protrusion, yaxis.protrusion, xaxisposition_abs, xaxis_flipped, 
-        yaxisposition_abs, yaxis_flipped,
+        xaxis.protrusion, xaxisposition_abs, xaxis_flipped, 
+        yaxis.protrusion, yaxisposition_abs, yaxis_flipped,
         ax.subtitle, ax.subtitlevisible, ax.subtitlesize, ax.subtitlegap,
         ax.titlelineheight, ax.subtitlelineheight, subtitlet, titlet, scene.viewport
-    )=#
-    onany(
-        blockscene, ax.title, ax.titlesize,
-        ax.titlegap, ax.titlevisible, ax.spinewidth,
-        ax.topspinevisible, ax.bottomspinevisible, ax.leftspinevisible, ax.rightspinevisible,
-        xaxis.protrusion, yaxis.protrusion, xaxisposition_abs, xaxis_flipped, 
-        yaxisposition_abs, yaxis_flipped,
-        ax.subtitle, ax.subtitlevisible, ax.subtitlesize, ax.subtitlegap,
-        ax.titlelineheight, ax.subtitlelineheight, subtitlet, titlet, scene.viewport
-    ) do args...
-        @show ax.layoutobservables.protrusions[]
-        ax.layoutobservables.protrusions[] = compute_protrusions(args...)
-    end
+    )
 
     # trigger first protrusions with one of the observables
     notify(ax.title)
@@ -666,7 +645,7 @@ function initialize_block!(ax::Axis; palette = nothing)
     register_events!(ax, scene)
 
     # these are the user defined limits
-    on(blockscene, ax.limits) do _
+    onany(blockscene, ax.limits, ax.yaxisposition, ax.xaxisposition) do args...
         reset_limits!(ax)
     end
 
@@ -677,8 +656,8 @@ function initialize_block!(ax::Axis; palette = nothing)
 
     # compute limits that adhere to the limit aspect ratio whenever the targeted
     # limits or the scene size change, because both influence the displayed ratio
-    onany(blockscene, scene.viewport) do pxa
-        @info "setting finallimits"
+    onany(blockscene, scene.viewport, targetlimits) do pxa, lims
+        @debug "setting finallimits"
         adjustlimits!(ax)
     end
 
@@ -706,28 +685,38 @@ function add_axis_limits!(plot)
     return
 end
 
-function mirror_ticks(tickpositions, ticksize, tickalign, viewport, side, axis_flipped, spinewidth)
-    @info "mirror_ticks $(side)"
+function mirror_ticks(tickpositions, ticksize, tickalign, viewport, spinewidth, spineposition)
+    @debug "`mirror_ticks`, spineposition=`$(spineposition)`."
     a = viewport
-    if side === :x
-        opp = axis_flipped ? bottom(a) : top(a)
-        sign = axis_flipped ? -1 : 1
+    is_horizontal = true
+    if spineposition === :bottom
+        pos = bottom(a)
+        sign = -1
+    elseif spineposition === :top
+        pos = top(a)
+        sign = 1
+    elseif spineposition === :left
+        is_horizontal = false
+        pos = left(a)
+        sign = -1
     else
-        opp = axis_flipped ? left(a) : right(a)
-        sign = axis_flipped ? -1 : 1
+        is_horizontal = false
+        pos = right(a)
+        sign = 1
     end
+
     d = ticksize * sign
     points = Vector{Point2f}(undef, 2 * length(tickpositions))
     spineoffset = sign * (0.5 * spinewidth)
-    if side === :x
+    if is_horizontal
         for (i, (x, _)) in enumerate(tickpositions)
-            points[2i - 1] = Point2f(x, opp - d * tickalign + spineoffset)
-            points[2i] = Point2f(x, opp + d - d * tickalign + spineoffset)
+            points[2i - 1] = Point2f(x, pos - d * tickalign + spineoffset)
+            points[2i] = Point2f(x, pos + d - d * tickalign + spineoffset)
         end
     else
         for (i, (_, y)) in enumerate(tickpositions)
-            points[2i - 1] = Point2f(opp - d * tickalign + spineoffset, y)
-            points[2i] = Point2f(opp + d - d * tickalign + spineoffset, y)
+            points[2i - 1] = Point2f(pos - d * tickalign + spineoffset, y)
+            points[2i] = Point2f(pos + d - d * tickalign + spineoffset, y)
         end
     end
     return points
@@ -763,6 +752,9 @@ function reset_limits!(ax; xauto = true, yauto = true, zauto = true)
             l
         else
             lo = mxlims[1] === nothing ? l[1] : mxlims[1]
+            if ax.yaxisposition[] isa Number
+                lo = min(lo, ax.yaxisposition[])
+            end
             hi = mxlims[2] === nothing ? l[2] : mxlims[2]
             (lo, hi)
         end
@@ -779,6 +771,9 @@ function reset_limits!(ax; xauto = true, yauto = true, zauto = true)
             l
         else
             lo = mylims[1] === nothing ? l[1] : mylims[1]
+            if ax.xaxisposition[] isa Number
+                lo = min(lo, ax.xaxisposition[])
+            end
             hi = mylims[2] === nothing ? l[2] : mylims[2]
             (lo, hi)
         end
@@ -1084,6 +1079,7 @@ end
 function adjustlimits!(finlims, asp, target, area)
     fl = adjustlimits(asp, target, area)
     finlims[] = fl
+    return
 end
 function adjustlimits(asp, target, area)
     # in the simplest case, just update the final limits with the target limits
@@ -1291,15 +1287,51 @@ which sides to hide with the symbols :l (left), :r (right), :b (bottom) and
 :t (top).
 """
 function hidespines!(la::Axis, spines::Symbol... = (:l, :r, :b, :t)...)
+    skip = Dict{Symbol, Bool}(s => false for s in spines)
     for s in spines
+        skip[s] && continue
         if s === :l
             la.leftspinevisible = false
+            if la.yaxis_is_spine[] === :left
+                la.yaxisvisible = false
+                skip[:y] = true
+            end
         elseif s === :r
             la.rightspinevisible = false
+            if la.yaxis_is_spine[] === :right 
+                la.yaxisvisible = false
+                skip[:y] = true
+            end
         elseif s === :b
             la.bottomspinevisible = false
+            if la.xaxis_is_spine[] === :bottom
+                la.xaxisvisible = false
+                skip[:x] = true
+            end
         elseif s === :t
             la.topspinevisible = false
+            if la.xaxis_is_spine[] === :top
+                la.xaxisvisible = false
+                skip[:x] = true
+            end
+        elseif s === :x
+            la.xaxisvisible = false
+            if xaxis_is_spine[] === :bottom
+                la.bottomspinevisible = false
+                skip[:b] = true
+            elseif xaxis_is_spine[] === :top
+                la.topspinevisible = false
+                skip[:t] = true
+            end
+        elseif s === :y
+            la.yaxisvisible = false
+            if yaxis_is_spine[] === :left
+                la.leftspinevisible = false
+                skip[:l] = true
+            elseif yaxis_is_spine[] === :right
+                skip[:r] = true
+                la.rightspinevisible = false
+            end
         else
             error("Invalid spine identifier $s. Valid options are :l, :r, :b and :t.")
         end

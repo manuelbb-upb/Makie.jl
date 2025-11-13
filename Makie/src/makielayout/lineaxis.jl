@@ -3,6 +3,11 @@
 # looks more balanced with numbers, especially in superscripts or subscripts
 const MINUS_SIGN = "−" # == "\u2212" (Unicode minus)
 
+include("lineaxisdecoration.jl")
+import .FancyArrows
+import .FancyArrows: deco_plotspecs, set_deco_rotation!, convert_to_deco_spec,
+    match_deco_connector!, connector_vector 
+
 function LineAxis(parent::Scene; @nospecialize(kwargs...))
     attrs = merge!(Attributes(kwargs), generic_plot_attributes(LineAxis))
     return LineAxis(parent, attrs)
@@ -25,7 +30,6 @@ function calculate_horizontal_extends(endpoints)::Tuple{Float32, NTuple{2, Float
     @debug "$(data[3] ? :x : :y) pos = $(data[1]), ep = $(data[2])"
     return data
 end
-
 
 function calculate_protrusion(
         closure_args,
@@ -54,15 +58,18 @@ end
 
 
 function create_linepoints(
-        pos_ext_hor,
-        flipped::Bool, spine_width::Number, trimspine::Union{Bool, Tuple{Bool, Bool}}, tickpositions::Vector{Point2f}, tickwidth::Number
+        pos_ext_hor, extents::NTuple{2, Float32},
+        flipped::Bool, spine_width::Number, trimspine::Union{Bool, Tuple{Bool, Bool}}, _tickpositions::Vector{Point2f}, tickwidth::Number
     )
 
-    (position::Float32, extents::NTuple{2, Float32}, horizontal::Bool) = pos_ext_hor
-
+    (position::Float32, _extents::NTuple{2, Float32}, horizontal::Bool) = pos_ext_hor
     if trimspine isa Bool
         trimspine = (trimspine, trimspine)
     end
+
+    l, u = extrema((extents))
+    i = horizontal ? 1 : 2
+    tickpositions = filter(pos -> l <= pos[i] <= u, _tickpositions)
 
     return if trimspine == (false, false) || length(tickpositions) < 2
         if horizontal
@@ -76,7 +83,7 @@ function create_linepoints(
             p2 = Point2f(x, extents[2] + 0.5spine_width)
             return [p1, p2]
         end
-    else
+    else    
         extents_oriented = last(tickpositions) > first(tickpositions) ? extents : reverse(extents)
         if horizontal
             y = position
@@ -277,8 +284,17 @@ function LineAxis(parent::Scene, attrs::Attributes)
     )
     minorticksused = get(attrs, :minorticksused, Observable(false))
 
-    pos_extents_horizontal = lift(calculate_horizontal_extends, parent, endpoints; ignore_equal_values = true)
-    horizontal = lift(x -> x[3], parent, pos_extents_horizontal)
+    _pos_extents_horizontal = lift(calculate_horizontal_extends, parent, endpoints; ignore_equal_values = true)
+    deco_data = lift(
+        register_deco, parent, attrs.tip, attrs.tail, _pos_extents_horizontal, reversed, 
+        spinewidth, spinecolor, spinevisible;
+        ignore_equal_values=true
+    )
+    pos_extents_horizontal = lift(first, parent, deco_data; ignore_equal_values=true)
+    new_extents = lift(x -> x[2], parent, deco_data; ignore_equal_values=true)
+    deco_specs = lift(x -> x[3], parent, deco_data; ignore_equal_values=true)
+    horizontal = lift(x -> x[3], parent, pos_extents_horizontal; ignore_equal_values=true)
+    
     # Tuple constructor converts more than `convert(NTuple{2, Float32}, x)` but we still need the conversion to Float32 tuple:
     limits = lift(x -> convert(NTuple{2, Float64}, Tuple(x)), parent, attrs.limits; ignore_equal_values = true)
     flipped = lift(x -> convert(Bool, x), parent, attrs.flipped; ignore_equal_values = true)
@@ -363,10 +379,10 @@ function LineAxis(parent::Scene, attrs::Attributes)
 
     map!(
         parent, labelpos, pos_extents_horizontal, flipped,
-        labelgap
-    ) do (position, extents, horizontal), flipped, labelgap
+        labelgap, attrs.labelposition
+    ) do (position, extents, horizontal), flipped, labelgap, pos_rel
         # fullgap = tickspace[] + labelgap
-        middle = extents[1] + 0.5f0 * (extents[2] - extents[1])
+        middle = extents[1] + pos_rel * (extents[2] - extents[1])
 
         x_or_y = flipped ? position + labelgap : position - labelgap
 
@@ -496,7 +512,7 @@ function LineAxis(parent::Scene, attrs::Attributes)
     )
 
     linepoints = lift(
-        create_linepoints, parent, pos_extents_horizontal, flipped, spinewidth, trimspine,
+        create_linepoints, parent, pos_extents_horizontal, new_extents, flipped, spinewidth, trimspine,
         tickpositions, tickwidth
     )
 
@@ -504,8 +520,12 @@ function LineAxis(parent::Scene, attrs::Attributes)
         parent, linepoints, linewidth = spinewidth, visible = spinevisible,
         color = spinecolor, inspectable = false, linestyle = nothing
     )
-
     translate!(decorations[:axisline], 0, 0, 20)
+
+    decorations[:deco] = plotlist!(parent, deco_specs)
+    for pl in decorations[:deco].plots
+        translate!(pl, 0, 0, 21)
+    end
 
     protrusion = Observable(0.0f0; ignore_equal_values = true)
 
@@ -550,6 +570,39 @@ function LineAxis(parent::Scene, attrs::Attributes)
     notify(ticklabelsvisible)
 
     return LineAxis(parent, protrusion, attrs, decorations, tickpositions, tickvalues, tickstrings, minortickpositions, minortickvalues)
+end
+
+function register_deco(tip_spec, tail_spec, pos_ext_hor, rev, spinewidth, spinecolor, visible)
+    @debug "Registering deco objects."
+    tip = init_arrow_style(convert_to_deco_spec(tip_spec); color = spinecolor, linewidth = spinewidth, visible)
+    tail = init_arrow_style(convert_to_deco_spec(tail_spec); color = spinecolor, linewidth = spinewidth, visible)
+    
+    local position::Float32, extents::NTuple{2, Float32}, horizontal::Bool = pos_ext_hor
+    @debug "Updating decoration graphs."
+    rotation = (horizontal ? 0 : π/2) + (rev ? π : 0f0)
+    set_deco_rotation!(tip, rotation)
+    rotation += π
+    set_deco_rotation!(tail, rotation)
+    
+    i = rev ? 1 : 2
+    target = horizontal ?  [extents[i], position] : [position, extents[i]]
+    match_deco_connector!(tip, target)
+
+    i = rev ? 2 : 1
+    target = horizontal ?  [extents[i], position] : [position, extents[i]]
+    match_deco_connector!(tail, target)
+
+    p1 = connector_vector(tip)
+    p2 = connector_vector(tail)
+    @debug "New endpoints with $(p1) and $(p2)."
+    ep = if p1[2] == p2[2] && p1[1] <= p2[1] || p1[1] == p2[1] && p1[2] <= p2[2]
+        (p1, p2)
+    else
+        (p2, p1)
+    end
+    new_extents = calculate_horizontal_extends(ep)[2]
+
+    return (pos_ext_hor, new_extents, vcat(deco_plotspecs(tip), deco_plotspecs(tail)))
 end
 
 function tight_ticklabel_spacing!(la::LineAxis)

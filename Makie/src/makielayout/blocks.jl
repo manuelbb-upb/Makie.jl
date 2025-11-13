@@ -595,10 +595,44 @@ observable_type(x::Type{Observable{T}}) where {T} = T
 
 convert_for_attribute(t::Any, x) = x
 convert_for_attribute(t::Type{Float64}, x) = convert(Float64, x)
+convert_for_attribute(t::Type{Bool}, x) = convert(Bool, x)
 convert_for_attribute(t::Type{RGBAf}, x) = to_color(x)::RGBAf
 convert_for_attribute(t::Type{Makie.FreeTypeAbstraction.FTFont}, x) = to_font(x)
-convert_for_attribute(t::Type{Union{Symbol, <:Number}}, x::Symbol) = x
-convert_for_attribute(t::Type{Union{Symbol, F}}, x::Number) where F<:Number = convert(F, x)
+
+convert_for_attribute(t::Union, x) = convert_for_unionattr(t, x)
+function convert_for_unionattr(t::Type{T}, x::X) :: Union{T, X} where {T, X}
+    attempt_convert = Val(true)
+    _, x = convert_for_unionattr(attempt_convert, t, x)
+    return x
+end
+function convert_for_unionattr(attempt_convert::Val{true}, t::Union, x)
+    ## recursively try to convert `x` to correct type
+    continue_convert, x = convert_for_unionattr(attempt_convert, t.a, x)
+    continue_convert, x = convert_for_unionattr(continue_convert, t.b, x)
+    return (continue_convert, x)
+end
+## do nothing if we have a satisfactory result
+convert_for_unionattr(attempt_convert::Val{false}, t::Type, x) = (attempt_convert, x)
+## otherwise, if `t` is not a `Union` type, try conversion with `_convert_for_unionattr`
+convert_for_unionattr(attempt_convert::Val{true}, t::Type, x) = _convert_for_unionattr(t, x)
+
+## first check if we actually already have correct type
+_convert_for_unionattr(t::Type{T}, x::T) where T = (Val(false), x)
+## otherwise, go one level deeper (function `__convert_for_unionattr` to avoid method ambiguities)
+_convert_for_unionattr(t::Type, x) = __convert_for_unionattr(t, x)
+## fallback to `convert_for_attribute`
+function __convert_for_unionattr(t::Type, x) 
+    continue_convert = Val(false)
+    try
+        x = convert_for_attribute(t, x)
+    catch
+        continue_convert = Val(true)
+    end
+    return continue_convert, x
+end
+## disable fallback for certain types (by returing `Val(true)` as first result)
+__convert_for_unionattr(t::Type{Nothing}, x) = (Val(true), x)
+__convert_for_unionattr(t::Type{Symbol}, x) = (Val(true), x)
 
 Base.@kwdef struct Example
     backend::Symbol = :CairoMakie # the backend that is used for rendering

@@ -48,9 +48,11 @@ baremodule Ann # bare for cleanest tab-completion behavior
         end
 
     end
+    init_arrow_style(style; kwargs...) = style
 end
 
 using .Ann
+import .Ann: init_arrow_style
 
 """
     annotation(x_target, y_target)
@@ -295,7 +297,8 @@ function Makie.plot!(p::Annotation{<:Tuple{<:AbstractVector{<:Vec4}}})
         p.style,
         p.color,
         p.linewidth,
-    ) do text_bbs, pth, clipstart, shrink, style, color, linewidth
+        p.visible;
+    ) do text_bbs, pth, clipstart, shrink, style, color, linewidth, visible
         specs = PlotSpec[]
         broadcast_foreach(text_bbs, screenpoints_target[], pth, clipstart, offsets[]) do text_bb, p2, conn, clipstart, offset
             offset_bb = text_bb + offset
@@ -313,7 +316,7 @@ function Makie.plot!(p::Annotation{<:Tuple{<:AbstractVector{<:Vec4}}})
 
             shrunk_path = shrink_path(clipped_path, shrink)
 
-            append!(specs, annotation_style_plotspecs(style, shrunk_path, p1, p2; color, linewidth))
+            append!(specs, annotation_style_plotspecs(style, shrunk_path, p1, p2; color, linewidth, visible))
         end
         return specs
     end
@@ -321,7 +324,7 @@ function Makie.plot!(p::Annotation{<:Tuple{<:AbstractVector{<:Vec4}}})
     plotlist!(
         p,
         plotspecs;
-        visible = p.visible[], # TODO: currently the observable doesn't seem to work here
+        #visible = p.visible[], # TODO: currently the observable doesn't seem to work here
     )
     return p
 end
@@ -968,7 +971,7 @@ end
 
 annotation_style_plotspecs(::Makie.Automatic, path, p1, p2; kwargs...) = annotation_style_plotspecs(Ann.Styles.Line(), path, p1, p2; kwargs...)
 
-function annotation_style_plotspecs(l::Ann.Styles.LineArrow, path::BezierPath, p1, p2; color, linewidth)
+function annotation_style_plotspecs(l::Ann.Styles.LineArrow, path::BezierPath, p1, p2; color, linewidth, visible)
     length(path.commands) < 2 && return PlotSpec[]
     p_head = endpoint(path.commands[end])
 
@@ -976,34 +979,61 @@ function annotation_style_plotspecs(l::Ann.Styles.LineArrow, path::BezierPath, p
 
     p_tail = _startpoint(path.commands[1])
 
-    shrink_for_head = shrinksize(l.head)
-    shrink_for_tail = shrinksize(l.tail)
+    head = init_arrow_style(l.head; color, linewidth, visible)
+    tail = init_arrow_style(l.tail; color, linewidth, visible)
+
+    shrink_for_head = shrinksize(head)
+    shrink_for_tail = shrinksize(tail)
 
     shortened_path = shrink_path(path, (shrink_for_tail, shrink_for_head))
     length(shortened_path.commands) < 2 && return PlotSpec[]
 
-    head_dir = normalize(p2 - endpoint(shortened_path.commands[end]))
+    _p2 = endpoint(shortened_path.commands[end])
+    if p2 != _p2
+        head_dir = p2 - _p2     # formerly normalized
+    else
+        p2_prev = endpoint(shortened_path.commands[end-1])
+        head_dir = _tangent_at_endpoint(shortened_path.commands[end], p2_prev)
+    end
     head_rotation = atan(head_dir[2], head_dir[1])
-    tail_dir = normalize(p1 - _startpoint(shortened_path.commands[1]))
+    _p1 = _startpoint(shortened_path.commands[1])
+    if p1 != _p1
+        tail_dir = p1 - _p1
+    else
+        p1_succ = _startpoint(shortened_path.commands[2])
+        tail_dir = _tangent_at_startpoint(shortened_path.commands[1], p1_succ)
+    end
     tail_rotation = atan(tail_dir[2], tail_dir[1])
 
-
     specs = [
-        PlotSpec(:Lines, shortened_path; color, space = :pixel, linewidth);
+        PlotSpec(:Lines, shortened_path; color, space = :pixel, linewidth, visible);
     ]
-    if l.head !== nothing
-        append!(specs, plotspecs(l.head, p_head; rotation = head_rotation, color, linewidth))
+    if head !== nothing
+        append!(specs, plotspecs(head, p_head; rotation = head_rotation, color, linewidth, visible))
     end
-    if l.tail !== nothing
-        append!(specs, plotspecs(l.tail, p_tail; rotation = tail_rotation, color, linewidth))
+    if tail !== nothing
+        append!(specs, plotspecs(tail, p_tail; rotation = tail_rotation, color, linewidth, visible))
     end
     return specs
 end
 
-function annotation_style_plotspecs(::Ann.Styles.Line, path::BezierPath, p1, p2; color, linewidth)
+function annotation_style_plotspecs(::Ann.Styles.Line, path::BezierPath, p1, p2; color, linewidth, visible)
     return [
-        PlotSpec(:Lines, path; color, linewidth, space = :pixel),
+        PlotSpec(:Lines, path; color, linewidth, visible, space = :pixel),
     ]
+end
+
+function _tangent_at_startpoint(c::Union{MoveTo, LineTo}, p_succ)
+    return p_succ - c.p
+end
+function _tangent_at_endpoint(c::Union{MoveTo, LineTo}, p_prev)
+    return c.p - p_prev
+end
+function _tangent_at_startpoint(c::CurveTo, p_succ)
+    return c.c1 - c.p
+end
+function _tangent_at_endpoint(c::CurveTo, p_prev)
+    return c.p - c.c2
 end
 
 _auto(x::Makie.Automatic, default) = default
@@ -1015,7 +1045,7 @@ function shrinksize(l::Ann.Arrows.Head)
     return l.length * (1 - l.notch)
 end
 
-function plotspecs(l::Ann.Arrows.Line, pos; rotation, color, linewidth)
+function plotspecs(l::Ann.Arrows.Line, pos; rotation, color, linewidth, visible)
     color = _auto(l.color, color)
     linewidth = _auto(l.linewidth, linewidth)
     sidelen = l.length / cos(l.angle / 2)
@@ -1024,11 +1054,11 @@ function plotspecs(l::Ann.Arrows.Line, pos; rotation, color, linewidth)
     p1 = pos + dir1 * sidelen
     p2 = pos + dir2 * sidelen
     return [
-        Makie.PlotSpec(:Lines, [p1, pos, p2]; space = :pixel, color, linewidth),
+        Makie.PlotSpec(:Lines, [p1, pos, p2]; space = :pixel, visible, color, linewidth),
     ]
 end
 
-function plotspecs(h::Ann.Arrows.Head, pos; rotation, color, linewidth)
+function plotspecs(h::Ann.Arrows.Head, pos; rotation, color, linewidth, visible)
     color = _auto(h.color, color)
     len = h.length
     L = 1 / cos(h.angle / 2)
@@ -1038,7 +1068,7 @@ function plotspecs(h::Ann.Arrows.Head, pos; rotation, color, linewidth)
 
     marker = BezierPath([MoveTo(0, 0), LineTo(p1), LineTo(p2), LineTo(p3), ClosePath()])
     return [
-        Makie.PlotSpec(:Scatter, pos; space = :pixel, rotation, color, marker, markersize = len),
+        Makie.PlotSpec(:Scatter, pos; space = :pixel, visible, rotation, color, marker, markersize = len),
     ]
 end
 

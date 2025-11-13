@@ -56,6 +56,7 @@ function generic_plot_attributes(::Type{LineAxis})
         ticklabelsvisible = true,
         spinewidth = 1.0f0,
         label = "label",
+        labelposition = 0.5f0,
         labelsize = 20.0f0,
         labelcolor = RGBf(0, 0, 0),
         labelvisible = true,
@@ -70,6 +71,8 @@ function generic_plot_attributes(::Type{LineAxis})
         minortickcolor = :black,
         minorticks = Makie.automatic,
         scale = identity,
+        tail = nothing,
+        tip = nothing
     )
 end
 
